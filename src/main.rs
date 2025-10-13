@@ -1,43 +1,55 @@
-use axum::{routing::post, Router};
+// src/main.rs
+
 use std::net::SocketAddr;
+use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-// ประกาศ modules ตามโครงสร้าง directory
+// Declare modules
+mod config;
 mod db;
 mod errors;
 mod handlers;
 mod models;
+mod routes;
 mod schema;
+mod security;
+mod state;
 
 #[tokio::main]
 async fn main() {
-    // โหลดตัวแปรจาก .env
+    // Load configuration from .env file
     dotenvy::dotenv().ok();
+    let config = config::AppConfig::from_env();
 
-    // ตั้งค่า logging
+    // Setup logging
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "axum_diesel_demo=debug".into()),
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "api=debug,tower_http=debug".into()),
         ))
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    // สร้าง Connection Pool
-    let db_pool = db::connect::establish_connection();
+    // Create database connection pool
+    let db_pool = db::connect::establish_connection(&config.database_url);
 
-    // Import handlers ที่เราต้องการใช้งาน
-    use handlers::user_handler;
+    // Create application state
+    let app_state = state::AppState {
+        db_pool,
+        config: config.clone(),
+    };
 
-    // สร้าง Router และกำหนด Routes ทั้งหมด
-    let app = Router::new()
-        // Route สำหรับ Users
-        .route("/users", post(user_handler::create_user))
-        .with_state(db_pool);
+    // Create the router
+    let app = routes::create_router(app_state);
 
-    // รันเซิร์ฟเวอร์
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    tracing::debug!("listening on {}", addr);
+    // Run the server
+    let addr = SocketAddr::from((
+        config.server_host.parse::<std::net::IpAddr>().unwrap(),
+        config.server_port,
+    ));
+
+    info!("Server listening on http://{}", addr);
+    info!("Swagger UI available at http://{}/swagger-ui", addr);
+
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
-
