@@ -1,0 +1,31 @@
+services:
+  # --- 1. PostgreSQL Database Service ---
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: mydb
+    ports:
+      - "5432:5432" # เปิด Port DB ไปยัง Host (ไม่จำเป็นถ้ามีแต่ App เรียกใช้)
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+      # - ./migrations:/docker-entrypoint-initdb.d # ถ้าต้องการรัน initial SQL
+
+  # --- 2. Rust API Service ---
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: "./api"
+    env_file:
+      - .env
+    ports:
+      - "8080:8080" # Map Port App จาก Container ไปยัง Host
+    depends_on:
+      - db # รอให้ DB รันก่อน
+    # command: cargo watch -x run 
+    
+volumes:
+  postgres_data:
