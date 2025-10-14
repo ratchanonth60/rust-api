@@ -11,6 +11,10 @@ path = "src/main.rs"
 # password hashing
 argon2 = "0.5"
 rand = "0.8"
+
+# jwt 
+jsonwebtoken = "8"
+
 # Web Framework
 axum = "0.7"
 tokio = { version = "1.38", features = ["full"] }

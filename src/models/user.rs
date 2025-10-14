@@ -4,6 +4,12 @@ use diesel::prelude::*;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct LoginRequest {
+    pub username: String,
+    pub password: String,
+}
+
 // Struct สำหรับข้อมูล User ที่ดึงมาจาก Database
 // สังเกตว่าเราไม่ใส่ field `password` เพราะไม่ควรส่งรหัสผ่านกลับไปให้ client
 #[derive(Queryable, Selectable, Serialize, Debug, Identifiable, ToSchema)]
@@ -12,6 +18,7 @@ use utoipa::ToSchema;
 pub struct User {
     pub id: i32,
     pub username: String,
+    pub password: String, // เก็บรหัสผ่านแบบ hash
     pub email: String,
     pub created_at: NaiveDateTime,
 }

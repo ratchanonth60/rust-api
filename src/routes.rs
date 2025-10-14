@@ -11,9 +11,11 @@ use utoipa_swagger_ui::SwaggerUi;
     paths(
         handlers::health_handler::health_check,
         handlers::user_handler::create_user,
+        handlers::auth_handler::login,
+        handlers::auth_handler::refresh_access_token,
     ),
     components(
-        schemas(crate::models::user::User, crate::models::user::CreateUser)
+        schemas(crate::models::user::User, crate::models::LoginRequest)
     ),
     tags((name = "API", description = "Rust API Endpoints"))
 )]
@@ -22,7 +24,13 @@ struct ApiDoc;
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
-        .route("/health", get(handlers::health_handler::health_check))
+        .route("/", get(handlers::health_handler::health_check))
+        .route("/login", post(handlers::auth_handler::login))
+        // create router for refresh token
+        .route(
+            "/refresh",
+            post(handlers::auth_handler::refresh_access_token),
+        )
         .route("/users", post(handlers::user_handler::create_user))
         .with_state(state)
 }

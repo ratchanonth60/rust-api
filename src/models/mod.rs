@@ -1,3 +1,5 @@
 pub mod user;
 
-pub use user::{CreateUser, User};
+pub mod jwt;
+
+pub use user::{CreateUser, LoginRequest, User};

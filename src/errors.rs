@@ -11,6 +11,7 @@ pub enum AppError {
     DatabaseError(diesel::result::Error),
     NotFound,
     InternalServerError(String),
+    Unauthorized,
 }
 
 // Allow converting from diesel::result::Error into our AppError
@@ -35,6 +36,7 @@ impl IntoResponse for AppError {
                     "An internal database error occurred".to_string(),
                 )
             }
+            AppError::Unauthorized => (StatusCode::UNAUTHORIZED, "Unauthorized access".to_string()),
             AppError::NotFound => (
                 StatusCode::NOT_FOUND,
                 "The requested resource was not found".to_string(),
