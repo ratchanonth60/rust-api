@@ -1,7 +1,7 @@
 use crate::{
     errors::AppError,
     models::{CreateUser, User}, // Import model ที่เราสร้าง
-    security::hash_password,    // ✅ Import a new function
+    security::hash_password,
     state::AppState,
 };
 use axum::{extract::State, http::StatusCode, Json};
@@ -38,4 +38,30 @@ pub async fn create_user(
     .unwrap()?;
 
     Ok((StatusCode::CREATED, Json(created_user)))
+}
+
+#[utoipa::path(
+    get,
+    path = "/users/profile",
+    responses(
+        (status = 200, description = "User profile retrieved successfully", body = User),
+        (status = 401, description = "Unauthorized")
+    ),
+    security(
+        ("bearer_auth" = [])
+    )
+)]
+pub async fn get_profile(
+    State(state): State<AppState>,
+    claims: crate::middlewars::auth::Claims,
+) -> Result<Json<User>, AppError> {
+    let mut conn = state.db_pool.get().expect("Failed to get a connection");
+    let user_id = claims.sub;
+    let user = tokio::task::spawn_blocking(move || {
+        use crate::schema::users::dsl::*;
+        users.filter(id.eq(user_id)).first::<User>(&mut conn)
+    })
+    .await
+    .unwrap()?;
+    Ok(Json(user))
 }
