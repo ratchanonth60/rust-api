@@ -38,6 +38,12 @@ impl From<ValidationErrors> for AppError {
     }
 }
 
+impl From<tokio::task::JoinError> for AppError {
+    fn from(err: tokio::task::JoinError) -> Self {
+        AppError::InternalServerError(format!("Task join error: {}", err))
+    }
+}
+
 // Define how to convert our AppError into a client-facing HTTP response
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {

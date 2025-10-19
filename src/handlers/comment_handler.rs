@@ -1,7 +1,9 @@
-use crate::{    errors::AppError,    models::{        comment::{Comment, CreateCommentPayload},        jwt::Claims,    },    state::AppState,};
+use crate::{    errors::AppError,    models::{        comment::{Comment, CreateCommentPayload},        jwt::Claims,    },
+    state::AppState,
+};
 use axum::{extract::{State, Path}, http::StatusCode, Json};
-use diesel::prelude::*;
 use validator::Validate;
+use std::sync::Arc;
 
 
 
@@ -23,30 +25,13 @@ use validator::Validate;
     )
 )]
 pub async fn create_comment(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     claims: Claims,
     Path(post_id_path): Path<i32>,
     Json(new_comment): Json<CreateCommentPayload>,
 ) -> Result<(StatusCode, Json<Comment>), AppError> {
     new_comment.validate()?;
-
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-
-    let created_comment = tokio::task::spawn_blocking(move || {
-        use crate::schema::comments::dsl::*;
-        let comment_data = (
-            content.eq(&new_comment.content),
-            user_id.eq(claims.sub),
-            post_id.eq(post_id_path),
-        );
-        diesel::insert_into(comments)
-            .values(comment_data)
-            .returning(Comment::as_returning())
-            .get_result(&mut conn)
-    })
-    .await
-    .unwrap()?;
-
+    let created_comment = state.comment_usecase.create_comment(new_comment, claims.sub, post_id_path).await?;
     Ok((StatusCode::CREATED, Json(created_comment)))
 }
 
@@ -62,16 +47,10 @@ pub async fn create_comment(
     )
 )]
 pub async fn get_comments_for_post(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Path(post_id_path): Path<i32>,
 ) -> Result<Json<Vec<Comment>>, AppError> {
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-    let comments_for_post = tokio::task::spawn_blocking(move || {
-        use crate::schema::comments::dsl::*;
-        comments.filter(post_id.eq(post_id_path)).select(Comment::as_select()).load(&mut conn)
-    })
-    .await
-    .unwrap()?;
+    let comments_for_post = state.comment_usecase.get_comments_for_post(post_id_path).await?;
     Ok(Json(comments_for_post))
 }
 
@@ -95,32 +74,13 @@ pub async fn get_comments_for_post(
     )
 )]
 pub async fn update_comment(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     claims: Claims,
     Path(comment_id_path): Path<i32>,
     Json(update_payload): Json<CreateCommentPayload>,
 ) -> Result<Json<Comment>, AppError> {
     update_payload.validate()?;
-
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-
-    let updated_comment = tokio::task::spawn_blocking(move || {
-        use crate::schema::comments::dsl::*;
-
-        let comment_to_update = comments.find(comment_id_path).select(Comment::as_select()).first(&mut conn)?;
-
-        if comment_to_update.user_id != claims.sub {
-            return Err(AppError::Forbidden);
-        }
-
-        Ok(diesel::update(comments.find(comment_id_path))
-            .set(content.eq(&update_payload.content))
-            .returning(Comment::as_returning())
-            .get_result(&mut conn)?)
-    })
-    .await
-    .unwrap()?;
-
+    let updated_comment = state.comment_usecase.update_comment(comment_id_path, update_payload, claims.sub).await?;
     Ok(Json(updated_comment))
 }
 
@@ -142,31 +102,10 @@ pub async fn update_comment(
     )
 )]
 pub async fn delete_comment(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     claims: Claims,
     Path(comment_id_path): Path<i32>,
 ) -> Result<StatusCode, AppError> {
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-
-    let num_deleted = tokio::task::spawn_blocking(move || {
-        use crate::schema::comments::dsl::*;
-        use crate::schema::users::dsl as user_dsl;
-
-        let comment_to_delete = comments.find(comment_id_path).select(Comment::as_select()).first(&mut conn)?;
-        let user = user_dsl::users.find(claims.sub).select(crate::models::user::User::as_select()).first(&mut conn)?;
-
-        if comment_to_delete.user_id != claims.sub && user.role != "admin" {
-            return Err(AppError::Forbidden);
-        }
-
-        Ok(diesel::delete(comments.find(comment_id_path)).execute(&mut conn)?)
-    })
-    .await
-    .unwrap()?;
-
-    if num_deleted == 0 {
-        return Err(AppError::NotFound);
-    }
-
+    state.comment_usecase.delete_comment(comment_id_path, claims.sub).await?;
     Ok(StatusCode::NO_CONTENT)
 }

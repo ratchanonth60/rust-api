@@ -15,7 +15,7 @@ pub struct PasswordResetToken {
 
 #[derive(Insertable, Deserialize)]
 #[diesel(table_name = password_reset_tokens)]
-pub struct NewPasswordResetToken<'a> {
-    pub email: &'a str,
-    pub token: &'a str,
+pub struct NewPasswordResetToken {
+    pub email: String,
+    pub token: String,
 }

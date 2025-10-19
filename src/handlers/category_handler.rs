@@ -4,8 +4,8 @@ use crate::{
     state::AppState,
 };
 use axum::{extract::State, http::StatusCode, Json};
-use diesel::prelude::*;
 use validator::Validate;
+use std::sync::Arc;
 
 
 #[utoipa::path(
@@ -25,23 +25,11 @@ use validator::Validate;
     )
 )]
 pub async fn create_category(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Json(new_category): Json<CreateCategory>,
 ) -> Result<(StatusCode, Json<Category>), AppError> {
     new_category.validate()?;
-
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-
-    let created_category = tokio::task::spawn_blocking(move || {
-        use crate::schema::categories::dsl::*;
-        diesel::insert_into(categories)
-            .values(&new_category)
-            .returning(Category::as_returning())
-            .get_result(&mut conn)
-    })
-    .await
-    .unwrap()?;
-
+    let created_category = state.category_usecase.create_category(new_category).await?;
     Ok((StatusCode::CREATED, Json(created_category)))
 }
 
@@ -54,14 +42,8 @@ pub async fn create_category(
     )
 )]
 pub async fn get_categories(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<Category>>, AppError> {
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-    let all_categories = tokio::task::spawn_blocking(move || {
-        use crate::schema::categories::dsl::*;
-        categories.select(Category::as_select()).load(&mut conn)
-    })
-    .await
-    .unwrap()?;
+    let all_categories = state.category_usecase.get_all_categories().await?;
     Ok(Json(all_categories))
 }

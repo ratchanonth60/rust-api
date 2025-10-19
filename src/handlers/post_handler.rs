@@ -1,9 +1,10 @@
-use crate::{    errors::AppError,    models::{        category::Category,        jwt::Claims,        pagination::Paginated,        post::{CreatePostPayload, Post, UpdatePostPayload},    },    state::AppState,};
+use crate::{    errors::AppError,    models::{        jwt::Claims,        pagination::Paginated,        post::{CreatePostPayload, Post, UpdatePostPayload},    },
+    state::AppState,
+};
 use axum::{extract::{Query, State}, http::StatusCode, Json};
-use diesel::prelude::*;
 use serde::Deserialize;
 use validator::Validate;
-use diesel::BelongingToDsl;
+use std::sync::Arc;
 
 
 
@@ -38,30 +39,12 @@ fn default_per_page() -> i64 {
     )
 )]
 pub async fn create_post(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     claims: Claims,
     Json(new_post): Json<CreatePostPayload>,
 ) -> Result<(StatusCode, Json<Post>), AppError> {
     new_post.validate()?;
-
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-
-    let created_post = tokio::task::spawn_blocking(move || {
-        use crate::schema::posts::dsl::*;
-        let post_data = (
-            title.eq(&new_post.title),
-            content.eq(&new_post.content),
-            category_id.eq(new_post.category_id),
-            user_id.eq(claims.sub),
-        );
-        diesel::insert_into(posts)
-            .values(post_data)
-            .returning(Post::as_returning())
-            .get_result(&mut conn)
-    })
-    .await
-    .unwrap()?;
-
+    let created_post = state.post_usecase.create_post(new_post, claims.sub).await?;
     Ok((StatusCode::CREATED, Json(created_post)))
 }
 
@@ -78,30 +61,11 @@ pub async fn create_post(
     )
 )]
 pub async fn get_posts(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Paginated<Post>>, AppError> {
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-    let (posts, total) = tokio::task::spawn_blocking(move || {
-        use crate::schema::posts::dsl::*;
-        let total = posts.into_boxed().count().get_result::<i64>(&mut conn)?;
-
-        let limit = params.per_page;
-        let offset = (params.page - 1) * limit;
-        let result = posts.into_boxed().limit(limit).offset(offset).select(Post::as_select()).load(&mut conn)?;
-        Ok::<(Vec<Post>, i64), diesel::result::Error>((result, total))
-    })
-    .await
-    .unwrap()?;
-
-    let total_pages = (total as f64 / params.per_page as f64).ceil() as i64;
-
-    Ok(Json(Paginated {
-        items: posts,
-        total_pages,
-        page: params.page,
-        per_page: params.per_page,
-    }))
+    let paginated_posts = state.post_usecase.get_posts(params.page, params.per_page).await?;
+    Ok(Json(paginated_posts))
 }
 
 #[utoipa::path(
@@ -117,16 +81,10 @@ pub async fn get_posts(
     )
 )]
 pub async fn get_post_by_id(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     axum::extract::Path(post_id): axum::extract::Path<i32>,
 ) -> Result<Json<Post>, AppError> {
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-    let post = tokio::task::spawn_blocking(move || {
-        use crate::schema::posts::dsl::*;
-        posts.find(post_id).select(Post::as_select()).first(&mut conn)
-    })
-    .await
-    .unwrap()?;
+    let post = state.post_usecase.get_post_by_id(post_id).await?;
     Ok(Json(post))
 }
 
@@ -143,24 +101,10 @@ pub async fn get_post_by_id(
     )
 )]
 pub async fn get_posts_by_category(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     axum::extract::Path(slug_path): axum::extract::Path<String>,
 ) -> Result<Json<Vec<Post>>, AppError> {
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-    let posts_in_category = tokio::task::spawn_blocking(move || {
-        use crate::schema::categories::dsl as categories_dsl;
-
-        let category = categories_dsl::categories
-            .filter(categories_dsl::slug.eq(slug_path))
-            .select(Category::as_select())
-            .first(&mut conn)?;
-
-        Post::belonging_to(&category)
-            .select(Post::as_select())
-            .load(&mut conn)
-    })
-    .await
-    .unwrap()?;
+    let posts_in_category = state.post_usecase.get_posts_by_category(slug_path).await?;
     Ok(Json(posts_in_category))
 }
 
@@ -184,32 +128,13 @@ pub async fn get_posts_by_category(
     )
 )]
 pub async fn update_post(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     claims: Claims,
     axum::extract::Path(post_id): axum::extract::Path<i32>,
     Json(update_payload): Json<UpdatePostPayload>,
 ) -> Result<Json<Post>, AppError> {
     update_payload.validate()?;
-
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-
-    let updated_post = tokio::task::spawn_blocking(move || {
-        use crate::schema::posts::dsl::*;
-
-        let post_to_update = posts.find(post_id).select(Post::as_select()).first(&mut conn)?;
-
-        if post_to_update.user_id != claims.sub {
-            return Err(AppError::Forbidden);
-        }
-
-        Ok(diesel::update(posts.find(post_id))
-            .set(&update_payload)
-            .returning(Post::as_returning())
-            .get_result(&mut conn)?)
-    })
-    .await
-    .unwrap()?;
-
+    let updated_post = state.post_usecase.update_post(post_id, update_payload, claims.sub).await?;
     Ok(Json(updated_post))
 }
 
@@ -231,31 +156,10 @@ pub async fn update_post(
     )
 )]
 pub async fn delete_post(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     claims: Claims,
     axum::extract::Path(post_id): axum::extract::Path<i32>,
 ) -> Result<StatusCode, AppError> {
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-
-    let num_deleted = tokio::task::spawn_blocking(move || {
-        use crate::schema::posts::dsl::*;
-        use crate::schema::users::dsl as user_dsl;
-
-        let post_to_delete = posts.find(post_id).select(Post::as_select()).first(&mut conn)?;
-        let user = user_dsl::users.find(claims.sub).select(crate::models::user::User::as_select()).first(&mut conn)?;
-
-        if post_to_delete.user_id != claims.sub && user.role != "admin" {
-            return Err(AppError::Forbidden);
-        }
-
-        Ok(diesel::delete(posts.find(post_id)).execute(&mut conn)?)
-    })
-    .await
-    .unwrap()?;
-
-    if num_deleted == 0 {
-        return Err(AppError::NotFound);
-    }
-
+    state.post_usecase.delete_post(post_id, claims.sub).await?;
     Ok(StatusCode::NO_CONTENT)
 }

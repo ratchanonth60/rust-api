@@ -9,10 +9,11 @@ use axum::{
 use axum_extra::headers::{authorization::Bearer, Authorization, HeaderMapExt};
 
 use crate::{errors::AppError, models::jwt::Claims, security::decode_token, state::AppState};
+use std::sync::Arc;
 
 // Middleware function
 pub async fn auth_guard(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     mut req: Request<Body>,
     next: Next,
 ) -> Result<Response, AppError> {

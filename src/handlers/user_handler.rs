@@ -1,12 +1,11 @@
 use crate::{ 
     errors::AppError,
-    models::user::{ChangePasswordRequest, CreateUser, UpdateUser, User}, // Import model ที่เราสร้าง
-    security::{hash_password, verify_password},
+    models::user::{ChangePasswordRequest, CreateUser, UpdateUser, User},
     state::AppState,
 };
 use axum::{extract::State, http::StatusCode, Json};
-use diesel::prelude::*;
 use validator::Validate;
+use std::sync::Arc;
 
 // Handler สำหรับ POST /users
 #[utoipa::path(
@@ -21,26 +20,11 @@ use validator::Validate;
     )
 )]
 pub async fn create_user(
-    State(state): State<AppState>,
-    Json(mut new_user): Json<CreateUser>,
+    State(state): State<Arc<AppState>>,
+    Json(new_user): Json<CreateUser>,
 ) -> Result<(StatusCode, Json<User>), AppError> {
     new_user.validate()?;
-    new_user.password = hash_password(new_user.password)
-        .await
-        .map_err(|e| AppError::InternalServerError(e))?;
-
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-
-    let created_user = tokio::task::spawn_blocking(move || {
-        use crate::schema::users::dsl::*;
-        diesel::insert_into(users)
-            .values(&new_user)
-            .returning(User::as_returning())
-            .get_result(&mut conn)
-    })
-    .await
-    .unwrap()?;
-
+    let created_user = state.user_usecase.create_user(new_user).await?;
     Ok((StatusCode::CREATED, Json(created_user)))
 }
 
@@ -56,17 +40,10 @@ pub async fn create_user(
     )
 )]
 pub async fn get_profile(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     claims: crate::models::jwt::Claims,
 ) -> Result<Json<User>, AppError> {
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-    let user_id = claims.sub;
-    let user = tokio::task::spawn_blocking(move || {
-        use crate::schema::users::dsl::*;
-        users.filter(id.eq(user_id)).select(User::as_select()).first(&mut conn)
-    })
-    .await
-    .unwrap()?;
+    let user = state.user_usecase.get_profile(claims.sub).await?;
     Ok(Json(user))
 }
 
@@ -85,23 +62,11 @@ pub async fn get_profile(
     )
 )]
 pub async fn update_profile(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     claims: crate::models::jwt::Claims,
     Json(update_user): Json<UpdateUser>,
 ) -> Result<Json<User>, AppError> {
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-    let user_id = claims.sub;
-
-    let updated_user = tokio::task::spawn_blocking(move || {
-        use crate::schema::users::dsl::*;
-        diesel::update(users.filter(id.eq(user_id)))
-            .set(&update_user)
-            .returning(User::as_returning())
-            .get_result(&mut conn)
-    })
-    .await
-    .unwrap()?;
-
+    let updated_user = state.user_usecase.update_profile(claims.sub, update_user).await?;
     Ok(Json(updated_user))
 }
 
@@ -120,39 +85,11 @@ pub async fn update_profile(
     )
 )]
 pub async fn change_password(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     claims: crate::models::jwt::Claims,
     Json(password_data): Json<ChangePasswordRequest>,
 ) -> Result<StatusCode, AppError> {
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-    let user_id = claims.sub;
-
-    let user_password: String = {
-        use crate::schema::users::dsl::*;
-        users
-            .filter(id.eq(user_id))
-            .select(password)
-            .first(&mut conn)?
-    };
-
-    let is_valid = verify_password(&user_password, &password_data.old_password)
-        .map_err(|_| AppError::InternalServerError("Failed to verify password".to_string()))?;
-
-    if !is_valid {
-        return Err(AppError::Unauthorized);
-    }
-
-    let new_password_hash = hash_password(password_data.new_password)
-        .await
-        .map_err(|_| AppError::InternalServerError("Failed to hash password".to_string()))?;
-
-    {
-        use crate::schema::users::dsl::*;
-        diesel::update(users.filter(id.eq(user_id)))
-            .set(password.eq(new_password_hash))
-            .execute(&mut conn)?;
-    }
-
+    state.user_usecase.change_password(claims.sub, password_data).await?;
     Ok(StatusCode::OK)
 }
 
@@ -169,20 +106,10 @@ pub async fn change_password(
     )
 )]
 pub async fn delete_profile(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     claims: crate::models::jwt::Claims,
 ) -> Result<StatusCode, AppError> {
-    let user_id = claims.sub;
-    let db_pool = state.db_pool.clone();
-
-    let _num_deleted = tokio::task::spawn_blocking(move || {
-        let mut conn = db_pool.get().expect("Failed to get a connection");
-        use crate::schema::users::dsl::*;
-        diesel::delete(users.filter(id.eq(user_id))).execute(&mut conn)
-    })
-    .await
-    .unwrap()?;
-
+    state.user_usecase.delete_profile(claims.sub).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -199,15 +126,9 @@ pub async fn delete_profile(
     )
 )]
 pub async fn get_all_users(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
 ) -> Result<Json<Vec<User>>, AppError> {
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-    let all_users = tokio::task::spawn_blocking(move || {
-        use crate::schema::users::dsl::*;
-        users.select(User::as_select()).load(&mut conn)
-    })
-    .await
-    .unwrap()?;
+    let all_users = state.user_usecase.get_all_users().await?;
     Ok(Json(all_users))
 }
 
@@ -228,21 +149,9 @@ pub async fn get_all_users(
     )
 )]
 pub async fn delete_user_by_id(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     axum::extract::Path(user_id): axum::extract::Path<i32>,
 ) -> Result<StatusCode, AppError> {
-    let db_pool = state.db_pool.clone();
-    let num_deleted = tokio::task::spawn_blocking(move || {
-        let mut conn = db_pool.get().expect("Failed to get a connection");
-        use crate::schema::users::dsl::*;
-        diesel::delete(users.filter(id.eq(user_id))).execute(&mut conn)
-    })
-    .await
-    .unwrap()?;
-
-    if num_deleted == 0 {
-        return Err(AppError::NotFound);
-    }
-
+    state.user_usecase.delete_user_by_id(user_id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

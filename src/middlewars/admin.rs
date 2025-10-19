@@ -1,10 +1,10 @@
 use axum::{body::Body, extract::State, http::Request, middleware::Next, response::Response};
-use diesel::prelude::*;
 
-use crate::{errors::AppError, models::jwt::Claims, models::user::User, state::AppState};
+use crate::{errors::AppError, models::jwt::Claims, state::AppState};
+use std::sync::Arc;
 
 pub async fn admin_guard(
-    State(state): State<AppState>,
+    State(state): State<Arc<AppState>>,
     req: Request<Body>,
     next: Next,
 ) -> Result<Response, AppError> {
@@ -14,16 +14,7 @@ pub async fn admin_guard(
         .cloned()
         .ok_or(AppError::Unauthorized)?;
 
-    let mut conn = state.db_pool.get().expect("Failed to get a connection");
-    let user = tokio::task::spawn_blocking(move || {
-        use crate::schema::users::dsl::*;
-        users
-            .find(claims.sub)
-            .select(User::as_select())
-            .first(&mut conn)
-    })
-    .await
-    .unwrap()?;
+    let user = state.user_usecase.get_profile(claims.sub).await?;
 
     if user.role != "admin" {
         return Err(AppError::Forbidden);

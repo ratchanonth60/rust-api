@@ -7,6 +7,7 @@ use axum::{
 use moka::sync::Cache;
 use std::{net::IpAddr, time::{Duration, Instant}};
 use crate::state::AppState;
+use std::sync::Arc;
 
 const MAX_REQUESTS_PER_MINUTE: u32 = 5;
 const WINDOW_DURATION: Duration = Duration::from_secs(60);
@@ -50,7 +51,7 @@ impl RateLimiter {
 }
 
 pub async fn rate_limit_middleware(
-    State(app_state): State<AppState>,
+    State(app_state): State<Arc<AppState>>,
     request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
