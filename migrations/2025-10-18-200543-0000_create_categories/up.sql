@@ -1,0 +1,5 @@
+CREATE TABLE categories (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR NOT NULL UNIQUE,
+    slug VARCHAR NOT NULL UNIQUE
+);

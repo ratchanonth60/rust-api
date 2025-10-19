@@ -79,3 +79,51 @@ pub fn decode_token(token: &str, secret: &str) -> Result<Claims, jsonwebtoken::e
     )?;
     Ok(token_data.claims)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::jwt::Claims;
+    use crate::models::User;
+    use chrono::NaiveDateTime;
+
+    #[tokio::test]
+    async fn test_hash_and_verify_password() {
+        let password = "mysecretpassword".to_string();
+        let hashed_password = hash_password(password.clone()).await.unwrap();
+        assert!(verify_password(&hashed_password, &password).unwrap());
+        assert!(!verify_password(&hashed_password, "wrongpassword").unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_create_and_decode_access_token() {
+        let user = User {
+            id: 1,
+            username: "testuser".to_string(),
+            password: "hashedpassword".to_string(),
+            email: "test@example.com".to_string(),
+            created_at: NaiveDateTime::from_timestamp_opt(0, 0).unwrap(),
+            role: "user".to_string(),
+        };
+        let secret = "test_secret";
+        let token = create_access_token(&user, secret).unwrap();
+        let claims = decode_token(&token, secret).unwrap();
+        assert_eq!(claims.sub, user.id);
+    }
+
+    #[tokio::test]
+    async fn test_create_and_decode_refresh_token() {
+        let user = User {
+            id: 1,
+            username: "testuser".to_string(),
+            password: "hashedpassword".to_string(),
+            email: "test@example.com".to_string(),
+            created_at: NaiveDateTime::from_timestamp_opt(0, 0).unwrap(),
+            role: "user".to_string(),
+        };
+        let secret = "test_secret";
+        let token = create_refresh_token(&user, secret).unwrap();
+        let claims = decode_token(&token, secret).unwrap();
+        assert_eq!(claims.sub, user.id);
+    }
+}

@@ -1,5 +1,6 @@
 use axum::{
     async_trait,
+    body::Body,
     extract::{FromRequestParts, State},
     http::{request::Parts, Request},
     middleware::Next,
@@ -10,10 +11,10 @@ use axum_extra::headers::{authorization::Bearer, Authorization, HeaderMapExt};
 use crate::{errors::AppError, models::jwt::Claims, security::decode_token, state::AppState};
 
 // Middleware function
-pub async fn auth_guard<B>(
+pub async fn auth_guard(
     State(state): State<AppState>,
-    mut req: Request<B>,
-    next: Next<B>,
+    mut req: Request<Body>,
+    next: Next,
 ) -> Result<Response, AppError> {
     // 1. ดึง Token จาก Header
     let token = req

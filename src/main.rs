@@ -1,8 +1,9 @@
-// src/main.rs
-
 use std::net::SocketAddr;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+
+use crate::middlewars::rate_limit::RateLimiter;
 
 // Declare modules
 mod config;
@@ -33,10 +34,14 @@ async fn main() {
     // Create database connection pool
     let db_pool = db::connect::establish_connection(&config.database_url);
 
+    // Run database migrations
+
+
     // Create application state
     let app_state = state::AppState {
         db_pool,
         config: config.clone(),
+        rate_limiter: RateLimiter::new(),
     };
 
     // Create the router
